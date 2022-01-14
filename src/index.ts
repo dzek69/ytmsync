@@ -1,16 +1,16 @@
 import fs from "fs-extra";
 import slugify from "slugify";
-import { ApiClient, download } from "api-reach";
+import { ApiClient, ClientHttpError, download } from "api-reach";
 import { join } from "path";
 import { match } from "bottom-line-utils";
 import prompt from "prompts";
 
 import type { Track } from "./lib/ytm.js";
+import type { ExtendedSongResult, SongMatch } from "./types";
 import { YoutubeMusic } from "./lib/ytm.js";
 import { askForDownload, getTrack } from "./getTrack.js";
 import { CantMatchError, GetTrackError } from "./errors.js";
-import type { ExtendedSongResult, SongMatch } from "./types";
-import { spawn } from "./lib/spawn.promise";
+import { spawn } from "./lib/spawn.promise.js";
 
 const DIR = "mp3";
 const WAIT_BETWEEN_TRACKS = 500;
@@ -108,16 +108,59 @@ const getSaveAs = (track: Track) => {
                 });
 
                 if (!value) {
-                    throw new GetTrackError("No suggested track was right", {
-                        foundTracks: [],
-                        track: track,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                    const { value: directly }: { value: boolean } = await prompt({
+                        type: "select",
+                        name: "value",
+                        message: "Do you want to download the song directly from YT Music (with standard quality)?",
+                        choices: [
+                            { title: "NO", value: false },
+                            { title: "YES", value: true },
+                        ],
                     });
-                }
 
-                foundTrack = {
-                    ...value,
-                    matchQuality: "manual",
-                };
+                    if (!directly) {
+                        throw new GetTrackError("No suggested track was right", {
+                            foundTracks: [],
+                            track: track,
+                        });
+                    }
+
+                    try {
+                        const path = "tmp/" + slugify(track.videoId) + ".mp3";
+                        await spawn("youtube-dl", [
+                            `https://www.youtube.com/watch?v=${track.videoId}`,
+                            "--format",
+                            "bestaudio",
+                            "--extract-audio",
+                            "--audio-format",
+                            "mp3",
+                            "--audio-quality",
+                            "0",
+                            "-o",
+                            path,
+                        ]);
+                        foundTrack = {
+                            artist: track.artist,
+                            title: track.title,
+                            service: "youtube music",
+                            size: "",
+                            time: track.duration,
+                            album: track.album?.name || "",
+                            matchQuality: "direct",
+                            downloadPath: path,
+                        };
+                    }
+                    catch (spawnError: unknown) {
+                        throw new GetTrackError("YTM download error", spawnError as Error);
+                    }
+                }
+                else {
+                    foundTrack = {
+                        ...value,
+                        matchQuality: "manual",
+                    };
+                }
             }
 
             const fullPath = join(DIR, saveAs);
@@ -138,7 +181,30 @@ const getSaveAs = (track: Track) => {
 
             // @TODO download into tmp file then rename
             if (foundTrack.downloadUrl) {
-                await download(fs.createWriteStream(fullPath), api, "GET", foundTrack.downloadUrl, null, null, null);
+                try {
+                    await download(
+                        fs.createWriteStream(fullPath), api, "GET", foundTrack.downloadUrl, null, null, null,
+                    );
+                }
+                catch (e: unknown) {
+                    if (e instanceof ClientHttpError && e.message === "Not Found") {
+                        console.info(
+                            "⬇", "ignoring cache",
+                        );
+                        foundTrack = await askForDownload(foundTrack, true);
+                        console.info(
+                            "⬇", "Downloading", foundTrack.artist, foundTrack.title,
+                            "from", (foundTrack.downloadUrl || foundTrack.downloadPath),
+                            "with match quality:", foundTrack.matchQuality,
+                        );
+                        await download(
+                            fs.createWriteStream(fullPath), api, "GET", foundTrack.downloadUrl!, null, null, null,
+                        );
+                    }
+                    else {
+                        throw e;
+                    }
+                }
             }
             else if (foundTrack.downloadPath) {
                 await fs.copy(foundTrack.downloadPath, fullPath);

@@ -3940,6 +3940,11 @@ micromatch@^4.0.2, micromatch@^4.0.4:
     braces "^3.0.1"
     picomatch "^2.2.3"
 
+miliseconds@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.npmjs.org/miliseconds/-/miliseconds-3.0.0.tgz#1145f97fb6ff0fb50940aa9f5f8456bd06073c07"
+  integrity sha512-gNOQeHltYRH6JHGxOv31thdQBZtzaM27EBcDsnSZ1ZFdiRZ/HDE+KQ0Z8dbyye6FyyMeiuCCWmJK58qomeDADg==
+
 mime-db@1.47.0:
   version "1.47.0"
   resolved "https://registry.npmjs.org/mime-db/-/mime-db-1.47.0.tgz#8cb313e59965d3c05cfbf898915a267af46a335c"

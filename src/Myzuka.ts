@@ -3,9 +3,13 @@ import join from "url-join";
 import { createError } from "better-custom-error";
 import Keyv from "keyv";
 import { ApiClient } from "api-reach";
+import { milli } from "miliseconds";
+
+import type { Options } from "api-reach";
 import type { Node as CheerioNode } from "cheerio";
 
 import type { ExtendedDataTable, SongResult, ExtendedSongResult } from "./types";
+import { wait } from "./utils.js";
 
 const MYZUKA_BASE = "https://myzuka.club/";
 
@@ -16,6 +20,10 @@ const api = new ApiClient({
     type: "text",
     base: MYZUKA_BASE,
     cache: new Keyv("sqlite://./cache.sqlite"),
+});
+
+const artistCache = new Keyv<ExtendedSongResult[]>("sqlite://./cache-artists.sqlite", {
+    ttl: milli().days(1).value(),
 });
 
 interface SearchSongOptions {
@@ -43,9 +51,12 @@ const russianToSkip = ["Размер", "Рейтинг", "Текст песни"
 const service = "myzuka";
 
 class Myzuka {
-    public static async getSongExtendedInfo(result: SongResult): Promise<ExtendedSongResult> {
-        console.log("GETTING EXTENDED INFO", result.url, result);
-        const { body } = await api.get(result.url!);
+    public static async getSongExtendedInfo(result: SongResult, ignoreCache = false): Promise<ExtendedSongResult> {
+        const options: Options = {};
+        if (ignoreCache) {
+            options.cache = null;
+        }
+        const { body } = await api.get(result.url!, null, options);
         const $ = cheerio.load(body);
 
         const downloadUrl = $(`a[itemprop="audio"][href^="/Song/Download"]`).attr("href");
@@ -119,6 +130,11 @@ class Myzuka {
     }
 
     public async getArtistSongs(artist: string): Promise<ExtendedSongResult[]> {
+        const cached = await artistCache.get(artist);
+        if (cached) {
+            return cached;
+        }
+
         const foundArtist = await this.searchArtist(artist);
         const songs: ExtendedSongResult[] = [];
 
@@ -153,7 +169,10 @@ class Myzuka {
             next = $("#result > .pager > ul > li:last-child:not(.current) a").attr("href");
 
             songs.push(...tracks);
+            await wait(5000);
         }
+
+        await artistCache.set(artist, songs);
 
         return songs;
     }

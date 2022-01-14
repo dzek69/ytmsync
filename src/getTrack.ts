@@ -1,4 +1,5 @@
 import { compareTwoStrings } from "string-similarity";
+import { sortBy } from "bottom-line-utils";
 
 import type { Track } from "./lib/ytm";
 import type { ExtendedSongResult, SongMatch } from "./types";
@@ -86,12 +87,19 @@ const getTrack = async (track: Track): Promise<SongMatch> => {
     }
 
     throw new CantMatchError({
-        foundTracks: allSongs,
+        // @ts-expect-error @TODO sort by needs better types
+        foundTracks: allSongs.sort(sortBy("title", true)),
         track: track,
     });
 };
 
-const askForDownload = (song: SongMatch): Promise<SongMatch> => {
+const askForDownload = async (song: SongMatch, ignoreCache = false): Promise<SongMatch> => {
+    if (song.service === "myzuka") {
+        return {
+            ...await Myzuka.getSongExtendedInfo(song, ignoreCache),
+            matchQuality: song.matchQuality,
+        };
+    }
     throw new Error("Can't get required download info");
 };
 
