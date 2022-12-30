@@ -5,8 +5,9 @@ import type { Track } from "./lib/ytm";
 import type { ExtendedSongResult, SongMatch } from "./types";
 
 import { CantMatchError, GetTrackError } from "./errors.js";
-import { Myzuka, MyzukaError } from "./Myzuka.js";
+import { Myzuka } from "./Myzuka.js";
 import { LocalFile } from "./LocalFile.js";
+import { removeParentheses } from "./utils.js";
 
 const my = new Myzuka();
 const local = new LocalFile([
@@ -56,23 +57,29 @@ const getTrack = async (track: Track): Promise<SongMatch> => {
     }
 
     if (!localSongs.length && !myzukaSongs.length) {
-        throw new GetTrackError("Could not find track", { track });
+        throw new CantMatchError("Could not find track", { track: track, foundTracks: [] });
     }
 
     const allSongs = [...localSongs, ...myzukaSongs];
 
     const closeEnough = allSongs.find(song => {
         if (track.album) {
-            const albumComparsion = compareTwoStrings(song.album.toLowerCase(), track.album.name.toLowerCase());
+            const albumComparsion = compareTwoStrings(
+                removeParentheses(song.album.toLowerCase()), removeParentheses(track.album.name.toLowerCase()),
+            );
             if (!isGoodEnough(track.album.name, albumComparsion)) {
                 return false;
             }
         }
-        const artistComparsion = compareTwoStrings(song.artist.toLowerCase(), track.artist.toLowerCase());
+        const artistComparsion = compareTwoStrings(
+            removeParentheses(song.artist.toLowerCase()), removeParentheses(track.artist.toLowerCase()),
+        );
         if (!isGoodEnough(track.artist, artistComparsion)) {
             return false;
         }
-        const titleComparsion = compareTwoStrings(song.title.toLowerCase(), track.title.toLowerCase());
+        const titleComparsion = compareTwoStrings(
+            removeParentheses(song.title.toLowerCase()), removeParentheses(track.title.toLowerCase()),
+        );
         if (!isGoodEnough(track.title, titleComparsion)) {
             return false;
         }
@@ -87,8 +94,29 @@ const getTrack = async (track: Track): Promise<SongMatch> => {
     }
 
     throw new CantMatchError({
-        // @ts-expect-error @TODO sort by needs better types
-        foundTracks: allSongs.sort(sortBy("title", true)),
+        foundTracks: allSongs.map((song) => {
+            let totalPossible = 2,
+                score = 0;
+
+            if (track.album) {
+                totalPossible += 1;
+                score += compareTwoStrings(
+                    removeParentheses(song.album.toLowerCase()), removeParentheses(track.album.name.toLowerCase()),
+                );
+            }
+
+            score += compareTwoStrings(
+                removeParentheses(song.artist.toLowerCase()), removeParentheses(track.artist.toLowerCase()),
+            );
+            score += compareTwoStrings(
+                removeParentheses(song.title.toLowerCase()), removeParentheses(track.title.toLowerCase()),
+            );
+
+            return {
+                ...song,
+                score: score / totalPossible,
+            };
+        }).sort(sortBy("score", false)),
         track: track,
     });
 };

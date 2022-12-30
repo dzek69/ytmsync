@@ -6,10 +6,16 @@ const secondsToTime = (seconds: number) => {
     /* eslint-enable @typescript-eslint/no-magic-numbers */
 };
 
-// eslint-disable-next-line no-promise-executor-return
-const wait = async (time: number) => new Promise(resolve => setTimeout(resolve, time));
+const removeParentheses = (s: string) => {
+    return s.replace(/\([^)]+\)/g, "").replace(/ {2,}/g, " ").trim();
+};
+
+const removeThe = (s: string) => {
+    return s.replace(/^the /i, "");
+};
 
 export {
     secondsToTime,
-    wait,
+    removeParentheses,
+    removeThe,
 };

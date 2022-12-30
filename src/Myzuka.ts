@@ -9,17 +9,35 @@ import type { Options } from "api-reach";
 import type { Node as CheerioNode } from "cheerio";
 
 import type { ExtendedDataTable, SongResult, ExtendedSongResult } from "./types";
-import { wait } from "./utils.js";
+import { wait } from "bottom-line-utils";
+import { removeThe } from "./utils.js";
+import { ClientErrorResponse, PossibleResponses } from "api-reach/src/response/response";
 
 const MYZUKA_BASE = "https://myzuka.club/";
 
 const MyzukaError = createError("MyzukaError");
 
+const cache = new Keyv("sqlite://./cache.sqlite", { ttl: milli().months(1).value() });
+
 const api = new ApiClient({
     // @ts-expect-error api-reach needs to export types
     type: "text",
     base: MYZUKA_BASE,
-    cache: new Keyv("sqlite://./cache.sqlite"),
+    cache: cache,
+    shouldCacheResponse: (response) => {
+        if (!(response instanceof Error)) { // any non error can be cached
+            console.info("Non error, caching", response.request.url);
+            return true;
+        }
+        console.info("Error, not caching!", response.details?.response.request.url);
+        return false;
+    },
+    fetchOptions: {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                + " (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36",
+        },
+    },
 });
 
 const artistCache = new Keyv<ExtendedSongResult[]>("sqlite://./cache-artists.sqlite", {
@@ -50,6 +68,12 @@ const russianToSkip = ["Размер", "Рейтинг", "Текст песни"
 
 const service = "myzuka";
 
+const staticArtists: { [key: string]: string | undefined } = {
+    "Ozzy Osbourne": "/Artist/8/ozzy-osbourne",
+    "Metalocalypse: Dethklok": "/Artist/4126/Dethklok",
+    "Bullet For My Valentine": "/Artist/49/bullet-for-my-valentine",
+};
+
 class Myzuka {
     public static async getSongExtendedInfo(result: SongResult, ignoreCache = false): Promise<ExtendedSongResult> {
         const options: Options = {};
@@ -57,7 +81,7 @@ class Myzuka {
             options.cache = null;
         }
         const { body } = await api.get(result.url!, null, options);
-        const $ = cheerio.load(body);
+        const $ = cheerio.load(body as string);
 
         const downloadUrl = $(`a[itemprop="audio"][href^="/Song/Download"]`).attr("href");
         if (!downloadUrl) {
@@ -108,10 +132,17 @@ class Myzuka {
     }
 
     public async searchArtist(query: string) {
+        if (staticArtists[query]) {
+            return {
+                artist: query,
+                url: staticArtists[query]!,
+            };
+        }
+
         const { body } = await api.get("/Search", {
             searchText: query,
         });
-        const $ = cheerio.load(body);
+        const $ = cheerio.load(body as string);
         const results = $("#artists + * + table > tbody > tr").map((index, el): ArtistResult => {
             const artist = $(el).find("> td:nth-child(2) a").text();
             const url = $(el).find("> td:nth-child(2) a").attr("href")!;
@@ -122,7 +153,7 @@ class Myzuka {
             };
         }).toArray();
 
-        const theArtist = results.find(r => r.artist.toLowerCase() === query.toLowerCase());
+        const theArtist = results.find(r => removeThe(r.artist.toLowerCase()) === removeThe(query.toLowerCase()));
         if (!theArtist) {
             throw new MyzukaError("Can't find artist", { results });
         }
@@ -139,39 +170,45 @@ class Myzuka {
         const songs: ExtendedSongResult[] = [];
 
         let next: string | undefined = foundArtist.url;
-        while (next) {
-            const { body } = await api.get(next);
-            const $ = cheerio.load(body);
-            const tracks = $("#result > [itemprop=tracks]").map((index, el): ExtendedSongResult => {
-                let downloadUrl = $(el).find(".play .ico").attr("data-url") || "";
-                if (downloadUrl) {
-                    downloadUrl = join(MYZUKA_BASE, downloadUrl);
-                }
-                const [time, quality] = $(el).find(".options .data").text().split("|").map(t => t.trim());
-                const size = $(el).find(".details .time").text();
-                const title = $(el).find(".details p a").text();
-                const url = $(el).find(".details p a").attr("href") || "";
-                const album = $(el).find(".details a[href^='/Album']").text() || "";
+        try {
+            while (next) {
+                console.info("Downloading", next);
+                const { body } = await api.get(next);
+                const $ = cheerio.load(body as string);
+                const tracks = $("#result > [itemprop=tracks]").map((index, el): ExtendedSongResult => {
+                    let downloadUrl = $(el).find(".play .ico").attr("data-url") || "";
+                    if (downloadUrl) {
+                        downloadUrl = join(MYZUKA_BASE, downloadUrl);
+                    }
+                    const [time, quality] = $(el).find(".options .data").text().split("|").map(t => t.trim());
+                    const size = $(el).find(".details .time").text();
+                    const title = $(el).find(".details p a").text();
+                    const url = $(el).find(".details p a").attr("href") || "";
+                    const album = $(el).find(".details a[href^='/Album']").text() || "";
 
-                return {
-                    url,
-                    downloadUrl,
-                    time,
-                    quality,
-                    artist,
-                    title,
-                    size,
-                    album,
-                    service,
-                };
-            }).toArray();
+                    return {
+                        url,
+                        downloadUrl,
+                        time,
+                        quality,
+                        artist,
+                        title,
+                        size,
+                        album,
+                        service,
+                    };
+                }).toArray();
 
-            next = $("#result > .pager > ul > li:last-child:not(.current) a").attr("href");
+                next = $("#result > .pager > ul > li:last-child:not(.current) a").attr("href");
 
-            songs.push(...tracks);
-            await wait(5000);
+                songs.push(...tracks);
+                await wait(5000);
+            }
         }
-
+        catch (e) {
+            console.error(e);
+            throw e;
+        }
         await artistCache.set(artist, songs);
 
         return songs;
@@ -181,7 +218,7 @@ class Myzuka {
         const { body } = await api.get("/Search", {
             searchText: query,
         });
-        const $ = cheerio.load(body);
+        const $ = cheerio.load(body as string);
         const result = $("#songs + * + table > tbody > tr").map((index, el): SongResult => {
             const artist = $(el).find("> td:first-child a").text();
             const title = $(el).find("> td:nth-child(2) a").text();

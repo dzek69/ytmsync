@@ -23,7 +23,7 @@ interface LikesResponse {
 
 class YoutubeMusic {
     public async getLikes() {
-        const data = JSON.parse(String(await fs.readFile("./data.txt"))) as LikesResponse;
+        const data = JSON.parse(String(await fs.readFile("./data.json"))) as LikesResponse;
         data.tracks = data.tracks.map(track => {
             return {
                 ...track,
@@ -31,6 +31,16 @@ class YoutubeMusic {
             };
         });
         return data;
+    }
+
+    public async getUploads() {
+        const data = JSON.parse(String(await fs.readFile("./uploads.json"))) as Track[];
+        return data.map(track => {
+            return {
+                ...track,
+                artist: track.artists[0].name,
+            };
+        });
     }
 }
 
